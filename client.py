@@ -8,6 +8,8 @@ import argparse
 import zmq
 import zmq.auth
 import msgpack
+import threading
+from zmq.utils.monitor import recv_monitor_message
 
 logger = logging.getLogger('sentinel_dynfw_client')
 logger.setLevel(logging.DEBUG)
@@ -24,8 +26,19 @@ PUB_TOPIC_LIST = b"dynfw/list"
 
 IPSET_NAME = "turris-sn-wan-input-block"
 
-FIRST_MESSAGE_TIMEOUT = 60*1000
 MISSING_UPDATE_CNT_LIMIT = 10
+
+def event_monitor(monitor):
+    while monitor.poll():
+        evt = recv_monitor_message(monitor)
+        #unfortunatelly, these constants are not yet in pyzmq (these event are still in DRAFT more in libzmq)
+        #constants from https://github.com/zeromq/libzmq/blob/c8a1c4542d13b6492949e7525f4fe8da266cac2b/src/zmq_draft.h#L60
+        if evt['event'] == 0x0800 or evt['event'] == 0x2000 or evt['event'] == 0x4000:
+            logger.error("Can't connect - handshake failed")
+            os._exit(1)
+        if evt['event'] == zmq.EVENT_MONITOR_STOPPED:
+            break
+    monitor.close()
 
 class Ipset:
     def __init__(self):
@@ -94,15 +107,13 @@ def main():
     context = zmq.Context()
     socket = create_zmq_socket(context, args.cert)
     socket.connect("tcp://{}:{}".format(args.server, args.port)) #tcp://192.168.1.126:5555
-    socket.setsockopt(zmq.RCVTIMEO, FIRST_MESSAGE_TIMEOUT)
+    monitor = socket.get_monitor_socket()
+    t = threading.Thread(target=event_monitor, args=(monitor,), daemon=True)
+    t.start()
     try:
         current_serial = reload_list(socket)
-    except zmq.error.Again:
-        logger.error("No LIST message received from server within %d seconds. This probably means we can't connect.", int(FIRST_MESSAGE_TIMEOUT/1000))
-        #... and what's worse, ZMQ won't tell us if the error is permanent (e.g. invalid certificate) or just temporary (no connectivity)
-        #so we exit -> init will restart the service and we hope that the problem will solve itself eventually
-        sys.exit(1)
-    socket.setsockopt(zmq.RCVTIMEO, -1)
+    finally:
+        socket.disable_monitor()
     socket.setsockopt(zmq.SUBSCRIBE, PUB_TOPIC_DELTA)
     while True:
         try:
@@ -125,7 +136,7 @@ def main():
             else: #missed some messages (or server restarted)
                 if msg_decoded["serial"] > current_serial and len(received_out_of_order) < MISSING_UPDATE_CNT_LIMIT:
                     received_out_of_order.add(msg_decoded["serial"])
-                    logger.debug("received out-of-order message: received serial %d, missing serial %d.", msg_decoded["serial"], current_serial + 1)
+                    logger.debug("message out-of-order: received serial %d, missing serial %d.", msg_decoded["serial"], current_serial + 1)
                 else: #missed too many messages, reloading the whole list
                     logger.info("too many messages are out-of-order, reloading the whole list")
                     socket.setsockopt(zmq.UNSUBSCRIBE, PUB_TOPIC_DELTA)

@@ -4,89 +4,84 @@ import subprocess
 import sys
 import os
 import logging
-import threading
 import argparse
 import zmq
 import zmq.auth
 from zmq.utils.monitor import recv_monitor_message
 import msgpack
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("sentinel_dynfw_client")
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 CLIENT_CERT_PATH = "/tmp/sentinel/"
 
-PUB_TOPIC_DELTA = b"dynfw/delta"
-PUB_TOPIC_LIST = b"dynfw/list"
+TOPIC_DYNFW_DELTA = "dynfw/delta"
+TOPIC_DYNFW_LIST = "dynfw/list"
 
-IPSET_NAME = "turris-sn-wan-input-block"
+DYNFW_IPSET_NAME = "turris-sn-wan-input-block"
 
 MISSING_UPDATE_CNT_LIMIT = 10
 
 
-def event_monitor(monitor):
+def wait_for_connection(socket):
+    monitor = socket.get_monitor_socket()
+    logger.debug("waiting for connection")
     while monitor.poll():
         evt = recv_monitor_message(monitor)
-        # unfortunatelly, these constants are not yet in pyzmq (these event are still in DRAFT more in libzmq)
-        # constants from https://github.com/zeromq/libzmq/blob/c8a1c4542d13b6492949e7525f4fe8da266cac2b/src/zmq_draft.h#L60
-        if evt['event'] == 0x0800 or evt['event'] == 0x2000 or evt['event'] == 0x4000:
-            logger.error("Can't connect - handshake failed")
-            os._exit(1)
-        if evt['event'] == zmq.EVENT_MONITOR_STOPPED:
+        if evt['event'] == zmq.EVENT_CONNECTED:
+            logger.debug("connected")
             break
+        if evt['event'] == 0x0800 or evt['event'] == 0x2000 or evt['event'] == 0x4000:
+            # detect handshake failure
+            # unfortunatelly, these constants are not yet in pyzmq
+            # constants from https://github.com/zeromq/libzmq/blob/c8a1c4542d13b6492949e7525f4fe8da266cac2b/src/zmq_draft.h#L60
+            # 0x0800 - ZMQ_EVENT_HANDSHAKE_FAILED_NO_DETAIL
+            # 0x2000 - ZMQ_EVENT_HANDSHAKE_FAILED_PROTOCOL
+            # 0x4000 - ZMQ_EVENT_HANDSHAKE_FAILED_AUTH
+            logger.error("Can't connect - handshake failed.")
+            print("Can't connect - handshake failed.", file=sys.stderr)
+            sys.exit(1)
     monitor.close()
+    socket.disable_monitor()
 
 
 class Ipset:
-    def __init__(self):
+    def __init__(self, name):
+        self.name = name
         self.commands = []
 
     def add_ip(self, ip):
-        self.commands.append('add {} {}\n'.format(IPSET_NAME, ip))
+        self.commands.append('add {} {}\n'.format(self.name, ip))
 
     def del_ip(self, ip):
-        self.commands.append('del {} {}\n'.format(IPSET_NAME, ip))
+        self.commands.append('del {} {}\n'.format(self.name, ip))
 
     def reset(self):
-        self.commands.append('create {} hash:ip -exist\n'.format(IPSET_NAME))
-        self.commands.append('flush {}\n'.format(IPSET_NAME))
+        self.commands.append('create {} hash:ip -exist\n'.format(self.name))
+        self.commands.append('flush {}\n'.format(self.name))
 
     def commit(self):
         try:
             p = subprocess.Popen(['/usr/sbin/ipset', 'restore'], stdin=subprocess.PIPE)
             for cmd in self.commands:
-                p.stdin.write(cmd.encode())
+                p.stdin.write(cmd.encode('utf-8'))
             p.stdin.close()
             p.wait()
             self.commands = []
-            return p.returncode == 0
-        except OSError as e:
-            logger.critical("can't run ipset command: %s. Can't continue, exiting now.", str(e))
+            if p.returncode != 0:
+                logger.warn("Error running ipset command: return code %d.", p.returncode)
+        except (PermissionError, FileNotFoundError) as e:
+            # these errors are permanent, i.e., they won't disappear upon next run
+            logger.critical("Can't run ipset command: %s.", str(e))
+            print("Can't run ipset command: {}.".format(str(e)), file=sys.stderr)
             sys.exit(1)
-
-
-def recv_unpack_message(socket):
-    msg = socket.recv_multipart()
-    msg_decoded = msgpack.unpackb(msg[1], encoding="UTF-8")
-    return msg_decoded
-
-
-def reload_list(socket):
-    socket.setsockopt(zmq.SUBSCRIBE, PUB_TOPIC_LIST)
-    msg_decoded = recv_unpack_message(socket)
-    try:
-        current_serial = msg_decoded["serial"]
-        ipset = Ipset()
-        ipset.reset()
-        for ip in msg_decoded["list"]:
-            ipset.add_ip(ip)
-        ipset.commit()
-    except KeyError as e:
-        logger.critical("missing mandatory key in LIST message: %s. Can't continue, exiting now.", str(e))
-        sys.exit(1)
-    socket.setsockopt(zmq.UNSUBSCRIBE, PUB_TOPIC_LIST)
-    logger.debug("reloaded list - %s addresses, serial %d", len(msg_decoded["list"]), current_serial)
-    return current_serial
+        except OSError as e:
+            # the rest of OSError should be temporary, e.g., ChildProcessError or BrokenPipeError
+            logger.warn("Error running ipset command: %s.", str(e))
 
 
 def create_zmq_socket(context, server_public_file):
@@ -102,56 +97,130 @@ def create_zmq_socket(context, server_public_file):
     return socket
 
 
-def main():
+class InvalidMsgError(Exception):
+    pass
+
+
+def parse_msg(data):
+    try:
+        msg_type = str(data[0], encoding="UTF-8")
+        payload = msgpack.unpackb(data[1], encoding="UTF-8")
+    except IndexError:
+        raise InvalidMsgError("Not enough parts in message")
+    except (TypeError, msgpack.exceptions.UnpackException, UnicodeDecodeError):
+        raise InvalidMsgError("Broken message")
+    return msg_type, payload
+
+
+class Serial():
+    def __init__(self, missing_limit):
+        self.missing_limit = missing_limit
+        self.received_out_of_order = set()
+        self.current_serial = 0
+
+    def update_ok(self, serial):
+        # update serial & return bool
+        # return whether the serial is ok or if the list should be reloaded
+        if serial == self.current_serial + 1:
+            # received expected serial
+            self.current_serial = serial
+            while self.current_serial + 1 in self.received_out_of_order:
+                # rewind serials
+                self.current_serial = self.current_serial + 1
+                self.received_out_of_order.remove(self.current_serial)
+            return True
+        else:
+            if serial < self.current_serial:
+                logger.debug("received lower serial (restarted server?)")
+                return False
+            if len(self.received_out_of_order) > self.missing_limit:
+                logger.debug("too many missed messages")
+                return False
+            self.received_out_of_order.add(serial)
+            return True
+
+    def reset(self, serial):
+        # reset serial - after list reload
+        self.received_out_of_order = set()
+        self.current_serial = serial
+
+
+class DynfwList():
+    def __init__(self, socket):
+        self.socket = socket
+        self.serial = Serial(MISSING_UPDATE_CNT_LIMIT)
+        self.ipset = Ipset(DYNFW_IPSET_NAME)
+        self.socket.setsockopt(zmq.SUBSCRIBE, TOPIC_DYNFW_LIST.encode('utf-8'))
+
+    def handle_delta(self, msg):
+        if "serial" not in msg or "delta" not in msg or "ip" not in msg:
+            raise InvalidMsgError("missing map key")
+        if not self.serial.update_ok(msg["serial"]):
+            logger.debug("going to reload the whole list")
+            self.socket.setsockopt(zmq.UNSUBSCRIBE, TOPIC_DYNFW_DELTA.encode('utf-8'))
+            self.socket.setsockopt(zmq.SUBSCRIBE, TOPIC_DYNFW_LIST.encode('utf-8'))
+            return
+        if msg["delta"] == "positive":
+            self.ipset.add_ip(msg["ip"])
+            logger.debug("DELTA message: +%s, serial %d", msg["ip"], msg["serial"])
+        elif msg["delta"] == "negative":
+            self.ipset.del_ip(msg["ip"])
+            logger.debug("DELTA message: -%s, serial %d", msg["ip"], msg["serial"])
+        self.ipset.commit()
+
+    def handle_list(self, msg):
+        if "serial" not in msg or "list" not in msg:
+            raise InvalidMsgError("missing map key")
+        self.serial.reset(msg["serial"])
+        self.ipset.reset()
+        for ip in msg["list"]:
+            self.ipset.add_ip(ip)
+        self.ipset.commit()
+        logger.debug("LIST message - %s addresses, serial %d", len(msg["list"]), msg["serial"])
+        self.socket.setsockopt(zmq.UNSUBSCRIBE, TOPIC_DYNFW_LIST.encode('utf-8'))
+        self.socket.setsockopt(zmq.SUBSCRIBE, TOPIC_DYNFW_DELTA.encode('utf-8'))
+
+
+def parse_args():
     parser = argparse.ArgumentParser(description='Turris::Sentinel Dynamic Firewall Client')
-    parser.add_argument('-s', '--server', default="sentinel.turris.cz", help='Server address')
-    parser.add_argument('-p', '--port', type=int, default=7087, help='Server port')
-    parser.add_argument('-c', '--cert', default="/tmp/sentinel_server.key", help='Server certificate (ZMQ)')
-    args = parser.parse_args()
+    parser.add_argument('-s',
+                        '--server',
+                        default="sentinel.turris.cz",
+                        help='Server address'
+                       )
+    parser.add_argument('-p',
+                        '--port',
+                        type=int,
+                        default=7087,
+                        help='Server port'
+                       )
+    parser.add_argument('-c',
+                        '--cert',
+                        default="/tmp/sentinel_server.key",
+                        help='Server ZMQ certificate'
+                       )
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
     context = zmq.Context()
     socket = create_zmq_socket(context, args.cert)
     socket.connect("tcp://{}:{}".format(args.server, args.port))
-    monitor = socket.get_monitor_socket()
-    # we use monitor just to notice initial authentification failure
-    t = threading.Thread(target=event_monitor, args=(monitor,), daemon=True)
-    t.start()
-    try:
-        current_serial = reload_list(socket)
-    finally:  # in case of interrupt, terminate the monitor thread
-        socket.disable_monitor()
-    received_out_of_order = set()
-    socket.setsockopt(zmq.SUBSCRIBE, PUB_TOPIC_DELTA)
+    wait_for_connection(socket)
+    dynfw_list = DynfwList(socket)
     while True:
+        msg = socket.recv_multipart()
         try:
-            msg_decoded = recv_unpack_message(socket)
-            ipset = Ipset()
-            if msg_decoded["delta"] == "positive":
-                ipset.add_ip(msg_decoded["ip"])
-                logger.debug("received DELTA message: + %s, serial %d", msg_decoded["ip"], msg_decoded["serial"])
-            elif msg_decoded["delta"] == "negative":
-                ipset.del_ip(msg_decoded["ip"])
-                logger.debug("received DELTA message: - %s, serial %d", msg_decoded["ip"], msg_decoded["serial"])
+            topic, payload = parse_msg(msg)
+            if topic == TOPIC_DYNFW_LIST:
+                dynfw_list.handle_list(payload)
+            elif topic == TOPIC_DYNFW_DELTA:
+                dynfw_list.handle_delta(payload)
             else:
-                logger.warning("received unknown DELTA message: %s", str(msg_decoded))
-                continue
-            ipset.commit()
-            if msg_decoded["serial"] == current_serial + 1:  # received expected serial - no missed messages
-                current_serial = current_serial + 1
-                while current_serial + 1 in received_out_of_order:
-                    received_out_of_order.remove(current_serial + 1)
-                    current_serial = current_serial + 1
-            else:  # missed some messages (or server restarted)
-                if msg_decoded["serial"] > current_serial and len(received_out_of_order) < MISSING_UPDATE_CNT_LIMIT:
-                    received_out_of_order.add(msg_decoded["serial"])
-                    logger.debug("message out-of-order: received serial %d, missing serial %d.", msg_decoded["serial"], current_serial + 1)
-                else:  # missed too many messages, reloading the whole list
-                    logger.info("too many messages are out-of-order, reloading the whole list")
-                    socket.setsockopt(zmq.UNSUBSCRIBE, PUB_TOPIC_DELTA)
-                    current_serial = reload_list(socket)
-                    socket.setsockopt(zmq.SUBSCRIBE, PUB_TOPIC_DELTA)
-                    received_out_of_order = set()
-        except KeyError as e:
-            logger.warning("missing mandatory key in DELTA message: %s", str(e))
+                logger.warning("received unknown topic: %s", topic)
+        except InvalidMsgError as e:
+            logger.error("Invalid message: %s", e)
 
 
 if __name__ == "__main__":

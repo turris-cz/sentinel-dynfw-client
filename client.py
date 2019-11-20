@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-
 # Turris:Sentinel DynFW client - client application for sentinel dynamic firewall
-# Copyright (C) 2018 CZ.NIC z.s.p.o. (https://www.nic.cz/)
+# Copyright (C) 2018-2019 CZ.NIC z.s.p.o. (https://www.nic.cz/)
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -37,8 +36,6 @@ CLIENT_CERT_PATH = "/tmp/sentinel/"
 
 TOPIC_DYNFW_DELTA = "dynfw/delta"
 TOPIC_DYNFW_LIST = "dynfw/list"
-
-DYNFW_IPSET_NAME = "turris-sn-wan-input-block"
 
 MISSING_UPDATE_CNT_LIMIT = 10
 
@@ -128,7 +125,7 @@ def parse_msg(data):
     return msg_type, payload
 
 
-class Serial():
+class Serial:
     def __init__(self, missing_limit):
         self.missing_limit = missing_limit
         self.received_out_of_order = set()
@@ -161,11 +158,11 @@ class Serial():
         self.current_serial = serial
 
 
-class DynfwList():
-    def __init__(self, socket):
+class DynfwList:
+    def __init__(self, socket, dynfw_ipset_name):
         self.socket = socket
         self.serial = Serial(MISSING_UPDATE_CNT_LIMIT)
-        self.ipset = Ipset(DYNFW_IPSET_NAME)
+        self.ipset = Ipset(dynfw_ipset_name)
         self.socket.setsockopt(zmq.SUBSCRIBE, TOPIC_DYNFW_LIST.encode('utf-8'))
 
     def handle_delta(self, msg):
@@ -202,19 +199,19 @@ def parse_args():
     parser.add_argument('-s',
                         '--server',
                         default="sentinel.turris.cz",
-                        help='Server address'
-                       )
+                        help='Server address')
     parser.add_argument('-p',
                         '--port',
                         type=int,
                         default=7087,
-                        help='Server port'
-                       )
+                        help='Server port')
     parser.add_argument('-c',
                         '--cert',
                         default="/tmp/sentinel_server.key",
-                        help='Server ZMQ certificate'
-                       )
+                        help='Server ZMQ certificate')
+    parser.add_argument('--ipset',
+                        default="turris-sn-dynfw-block",
+                        help='IPset name to push blocked IPs to')
     return parser.parse_args()
 
 
@@ -224,7 +221,7 @@ def main():
     socket = create_zmq_socket(context, args.cert)
     socket.connect("tcp://{}:{}".format(args.server, args.port))
     wait_for_connection(socket)
-    dynfw_list = DynfwList(socket)
+    dynfw_list = DynfwList(socket, args.ipset)
     while True:
         msg = socket.recv_multipart()
         try:

@@ -207,7 +207,7 @@ def parse_args():
                         help='Server port')
     parser.add_argument('-c',
                         '--cert',
-                        default="/tmp/sentinel_server.key",
+                        default="/tmp/run/sentinel_server.key",
                         help='Server ZMQ certificate')
     parser.add_argument('--ipset',
                         default="turris-sn-dynfw-block",

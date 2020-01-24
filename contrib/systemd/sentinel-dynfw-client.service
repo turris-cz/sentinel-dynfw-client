@@ -1,0 +1,13 @@
+[Unit]
+Description=Turris dynamic firewall client
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/mkdir -p -m 0700 /var/cache/sentinel
+ExecStartPre=/usr/bin/curl -f -s https://repo.turris.cz/sentinel/dynfw.pub -o /var/cache/sentinel/sentinel_server.key
+ExecStartPre=/usr/sbin/ipset create turris-dynfw hash:ip -exist
+ExecStart=/usr/bin/sentinel-dynfw-client --ipset turris-dynfw -c /var/cache/sentinel/sentinel_server.key
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<zone target="%%REJECT%%">
+  <short>Turris-FW</short>
+  <description>Blacklists bad guys from Turris dynamic firewall.</description>
+  <source ipset="turris-dynfw"/>
+</zone>

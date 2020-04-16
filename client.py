@@ -129,7 +129,7 @@ class InvalidMsgError(Exception):
 def parse_msg(data):
     try:
         msg_type = str(data[0], encoding="UTF-8")
-        payload = msgpack.unpackb(data[1], encoding="UTF-8")
+        payload = msgpack.unpackb(data[1], raw=False)
     except IndexError:
         raise InvalidMsgError("Not enough parts in message")
     except (TypeError, msgpack.exceptions.UnpackException, UnicodeDecodeError) as e:

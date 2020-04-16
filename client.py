@@ -15,15 +15,16 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import argparse
+import logging
+import os
 import subprocess
 import sys
-import os
-import logging
-import argparse
+
+import msgpack
 import zmq
 import zmq.auth
 from zmq.utils.monitor import recv_monitor_message
-import msgpack
 
 logger = logging.getLogger("sentinel_dynfw_client")
 handler = logging.StreamHandler()

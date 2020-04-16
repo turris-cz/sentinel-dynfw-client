@@ -70,8 +70,8 @@ def wait_for_connection(socket):
             logger.error("Can't connect - handshake failed.")
             print("Can't connect - handshake failed.", file=sys.stderr)
             sys.exit(1)
-    monitor.close()
     socket.disable_monitor()
+    monitor.close()
 
 
 class Ipset:

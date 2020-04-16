@@ -38,6 +38,17 @@ CLIENT_CERT_PATH = "/tmp/sentinel/"
 TOPIC_DYNFW_DELTA = "dynfw/delta"
 TOPIC_DYNFW_LIST = "dynfw/list"
 
+REQUIRED_DELTA_KEYS = (
+    "serial",
+    "delta",
+    "ip",
+)
+REQUIRED_LIST_KEYS = (
+    "serial",
+    "list",
+)
+
+
 MISSING_UPDATE_CNT_LIMIT = 10
 
 
@@ -121,8 +132,8 @@ def parse_msg(data):
         payload = msgpack.unpackb(data[1], encoding="UTF-8")
     except IndexError:
         raise InvalidMsgError("Not enough parts in message")
-    except (TypeError, msgpack.exceptions.UnpackException, UnicodeDecodeError):
-        raise InvalidMsgError("Broken message")
+    except (TypeError, msgpack.exceptions.UnpackException, UnicodeDecodeError) as e:
+        raise InvalidMsgError("Broken message: {}".format(e))
     return msg_type, payload
 
 
@@ -167,8 +178,9 @@ class DynfwList:
         self.socket.setsockopt(zmq.SUBSCRIBE, TOPIC_DYNFW_LIST.encode('utf-8'))
 
     def handle_delta(self, msg):
-        if "serial" not in msg or "delta" not in msg or "ip" not in msg:
-            raise InvalidMsgError("missing map key")
+        for key in REQUIRED_DELTA_KEYS:
+            if key not in msg:
+                raise InvalidMsgError("missing delta key {}".format(key))
         if not self.serial.update_ok(msg["serial"]):
             logger.debug("going to reload the whole list")
             self.socket.setsockopt(zmq.UNSUBSCRIBE, TOPIC_DYNFW_DELTA.encode('utf-8'))
@@ -183,8 +195,9 @@ class DynfwList:
         self.ipset.commit()
 
     def handle_list(self, msg):
-        if "serial" not in msg or "list" not in msg:
-            raise InvalidMsgError("missing map key")
+        for key in REQUIRED_LIST_KEYS:
+            if key not in msg:
+                raise InvalidMsgError("missing list key {}".format(key))
         self.serial.reset(msg["serial"])
         self.ipset.reset()
         for ip in msg["list"]:

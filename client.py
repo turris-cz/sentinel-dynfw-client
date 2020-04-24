@@ -27,11 +27,7 @@ import zmq.auth
 from zmq.utils.monitor import recv_monitor_message
 
 logger = logging.getLogger("sentinel_dynfw_client")
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.setLevel(logging.DEBUG)
+
 
 CLIENT_CERT_PATH = "/tmp/sentinel/"
 
@@ -47,7 +43,6 @@ REQUIRED_LIST_KEYS = (
     "serial",
     "list",
 )
-
 
 MISSING_UPDATE_CNT_LIMIT = 10
 
@@ -229,8 +224,18 @@ def parse_args():
     return parser.parse_args()
 
 
+def configure_logging():
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+
+
 def main():
     args = parse_args()
+    configure_logging()
+
     context = zmq.Context()
     socket = create_zmq_socket(context, args.cert)
     socket.connect("tcp://{}:{}".format(args.server, args.port))

@@ -221,20 +221,26 @@ def parse_args():
     parser.add_argument('--ipset',
                         default="turris-sn-dynfw-block",
                         help='IPset name to push blocked IPs to')
+    parser.add_argument('-v',
+                        '--verbose',
+                        action="store_true",
+                        help='Increase output verbosity')
     return parser.parse_args()
 
 
-def configure_logging():
+def configure_logging(debug: bool):
     handler = logging.StreamHandler()
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+    if debug:
+        logger.setLevel(logging.DEBUG)
 
 
 def main():
     args = parse_args()
-    configure_logging()
+    configure_logging(args.verbose)
 
     context = zmq.Context()
     socket = create_zmq_socket(context, args.cert)

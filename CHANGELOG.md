@@ -11,6 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
+## [1.3] - 2020-05-04
+
+### Added
+
+- Changelog
+
+### Changed
+
+- Default server certificate path
+- Location of temporary run directory (for client key and certificate)
+- Fix temporary run directory permissions
+- Fix logger deprecation warnings
+
+
 ## [1.2.1] - 2020-05-03
 
 ### Added

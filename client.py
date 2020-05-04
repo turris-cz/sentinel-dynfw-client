@@ -29,8 +29,8 @@ from zmq.utils.monitor import recv_monitor_message
 logger = logging.getLogger("sentinel_dynfw_client")
 
 
-SERVER_CERT_PATH_DEFAULT = "/tmp/run/sentinel_server.key"
-CLIENT_CERT_PATH = "/tmp/sentinel/"
+SERVER_CERT_PATH_DEFAULT = "/var/run/dynfw_server.pub"
+CLIENT_CERT_PATH = "/var/run/dynfw"
 
 TOPIC_DYNFW_DELTA = "dynfw/delta"
 TOPIC_DYNFW_LIST = "dynfw/list"

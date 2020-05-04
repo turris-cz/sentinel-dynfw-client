@@ -108,7 +108,7 @@ class Ipset:
 def create_zmq_socket(context, server_public_file):
     socket = context.socket(zmq.SUB)
     if not os.path.exists(CLIENT_CERT_PATH):
-        os.mkdir(CLIENT_CERT_PATH)
+        os.mkdir(CLIENT_CERT_PATH, mode=0o770)
     _, client_secret_file = zmq.auth.create_certificates(CLIENT_CERT_PATH, "client")
     client_public, client_secret = zmq.auth.load_certificate(client_secret_file)
     socket.curve_secretkey = client_secret

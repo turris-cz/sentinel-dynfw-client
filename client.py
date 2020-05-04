@@ -29,6 +29,7 @@ from zmq.utils.monitor import recv_monitor_message
 logger = logging.getLogger("sentinel_dynfw_client")
 
 
+SERVER_CERT_PATH_DEFAULT = "/tmp/run/sentinel_server.key"
 CLIENT_CERT_PATH = "/tmp/sentinel/"
 
 TOPIC_DYNFW_DELTA = "dynfw/delta"
@@ -216,7 +217,7 @@ def parse_args():
                         help='Server port')
     parser.add_argument('-c',
                         '--cert',
-                        default="/tmp/run/sentinel_server.key",
+                        default=SERVER_CERT_PATH_DEFAULT,
                         help='Server ZMQ certificate')
     parser.add_argument('--ipset',
                         default="turris-sn-dynfw-block",

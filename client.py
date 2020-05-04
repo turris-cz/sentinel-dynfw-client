@@ -94,7 +94,7 @@ class Ipset:
             p.wait()
             self.commands = []
             if p.returncode != 0:
-                logger.warn("Error running ipset command: return code %d.", p.returncode)
+                logger.warning("Error running ipset command: return code %d.", p.returncode)
         except (PermissionError, FileNotFoundError) as e:
             # these errors are permanent, i.e., they won't disappear upon next run
             logger.critical("Can't run ipset command: %s.", str(e))
@@ -102,7 +102,7 @@ class Ipset:
             sys.exit(1)
         except OSError as e:
             # the rest of OSError should be temporary, e.g., ChildProcessError or BrokenPipeError
-            logger.warn("Error running ipset command: %s.", str(e))
+            logger.warning("Error running ipset command: %s.", str(e))
 
 
 def create_zmq_socket(context, server_public_file):

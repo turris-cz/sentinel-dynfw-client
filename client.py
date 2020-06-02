@@ -20,6 +20,7 @@ import logging
 import os
 import subprocess
 import sys
+import re
 
 import msgpack
 import zmq
@@ -44,6 +45,9 @@ REQUIRED_LIST_KEYS = (
     "serial",
     "list",
 )
+
+# Source: https://riptutorial.com/regex/example/14146/match-an-ip-address
+RE_IPV4 = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
 
 MISSING_UPDATE_CNT_LIMIT = 10
 
@@ -73,13 +77,20 @@ def wait_for_connection(socket):
 class Ipset:
     def __init__(self, name):
         self.name = name
+        self.regexp = re.compile(RE_IPV4)
         self.commands = []
 
     def add_ip(self, ip):
-        self.commands.append('add {} {}\n'.format(self.name, ip))
+        if self.regexp.fullmatch(ip):
+            self.commands.append('add {} {}\n'.format(self.name, ip))
+        else:
+            logger.warning("IP address skipped as it is not IPv4: %s", ip)
 
     def del_ip(self, ip):
-        self.commands.append('del {} {}\n'.format(self.name, ip))
+        if self.regexp.fullmatch(ip):
+            self.commands.append('del {} {}\n'.format(self.name, ip))
+        else:
+            logger.warning("IP address removal skipped as it is not IPv4: %s", ip)
 
     def reset(self):
         self.commands.append('create {} hash:ip -exist\n'.format(self.name))

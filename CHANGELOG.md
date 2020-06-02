@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Filter for IPv4 addresses (invalid ones are dropped)
 
 
 ## [1.3] - 2020-05-04

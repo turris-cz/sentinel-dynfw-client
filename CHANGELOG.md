@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 ## [Unreleased]
+### Added
+- Argument `--renew` that automatically receives latest version of server
+  certificate on client startup
+- Argument `--cert-url` to specify URL used to get server's certificate when
+  `--renew` is used
 
 
 ## [1.3.1] - 2020-06-09

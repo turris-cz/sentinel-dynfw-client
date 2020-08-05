@@ -21,6 +21,8 @@ import os
 import subprocess
 import sys
 import re
+import time
+import urllib.request
 
 import msgpack
 import zmq
@@ -30,6 +32,7 @@ from zmq.utils.monitor import recv_monitor_message
 logger = logging.getLogger("sentinel_dynfw_client")
 
 
+SERVER_CERT_URL = "https://repo.turris.cz/sentinel/dynfw.pub"
 SERVER_CERT_PATH_DEFAULT = "/var/run/dynfw_server.pub"
 CLIENT_CERT_PATH = "/var/run/dynfw"
 
@@ -50,6 +53,22 @@ REQUIRED_LIST_KEYS = (
 RE_IPV4 = r"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
 
 MISSING_UPDATE_CNT_LIMIT = 10
+
+
+def renew_server_certificate(cert_url, cert_path):
+    logger.info("Renewing server certificate")
+    delay = 1
+    while True:
+        try:
+            with urllib.request.urlopen(cert_url) as urlf:
+                with open(cert_path, "wb") as filef:
+                    filef.write(urlf.read())
+            return
+        except urllib.error.URLError as exc:
+            delay = delay * 2 if delay < 120 else delay  # At maximum we wait for two minutes to try again
+            logger.warning("Unable to renew certificate (another try after %d sec): %s", delay, exc.reason)
+            time.sleep(delay)
+    logger.info("Server certificate renewed")
 
 
 def wait_for_connection(socket):
@@ -229,7 +248,14 @@ def parse_args():
     parser.add_argument('-c',
                         '--cert',
                         default=SERVER_CERT_PATH_DEFAULT,
-                        help='Server ZMQ certificate')
+                        help='Path to file with server ZMQ certificate')
+    parser.add_argument('-r',
+                        '--renew',
+                        action="store_true",
+                        help='Renew or get Server ZMQ certificate')
+    parser.add_argument('--cert-url',
+                        default=SERVER_CERT_URL,
+                        help='URL to receive server certificate from when --renew is used')
     parser.add_argument('--ipset',
                         default="turris-sn-dynfw-block",
                         help='IPset name to push blocked IPs to')
@@ -253,6 +279,9 @@ def configure_logging(debug: bool):
 def main():
     args = parse_args()
     configure_logging(args.verbose)
+
+    if args.renew:
+        renew_server_certificate(args.cert_url, args.cert)
 
     context = zmq.Context()
     socket = create_zmq_socket(context, args.cert)

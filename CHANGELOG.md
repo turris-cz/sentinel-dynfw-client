@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 
 
-## [Unreleased]
+## [1.4.0] - 2020-08-06
 ### Added
 - Argument `--renew` that automatically receives latest version of server
   certificate on client startup
